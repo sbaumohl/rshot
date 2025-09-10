@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clap = "4.5.47"
+clap = {version= "4.5.47", features = ["derive"]}
 image = "0.25.6"
 memmap2 = "0.9.8"
 wayland-client = "0.31.11"

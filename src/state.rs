@@ -38,6 +38,12 @@ impl Default for ImageDims {
     }
 }
 
+impl ImageDims {
+    pub fn total_size(&self) -> usize {
+        (self.stride * self.height) as usize
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MockEvent {
     pub ss_manager: Option<ZwlrScreencopyManagerV1>,
@@ -56,6 +62,7 @@ impl MockEvent {
         height: i32,
         width: i32,
         stride: i32,
+        format: Format,
         handle: &QueueHandle<MockEvent>,
     ) {
         let total_size = stride * height;
@@ -65,15 +72,7 @@ impl MockEvent {
             .as_ref()
             .unwrap()
             .create_pool(file.as_fd(), total_size, handle, ());
-        let shm_buf = pool.create_buffer(
-            offset,
-            width,
-            height,
-            stride,
-            wayland_client::protocol::wl_shm::Format::Xrgb8888,
-            handle,
-            (),
-        );
+        let shm_buf = pool.create_buffer(offset, width, height, stride, format, handle, ());
         self.wl_shm_pool = Some(pool);
         self.wl_buffer = Some(shm_buf);
         self.file = Some(file);
@@ -97,6 +96,16 @@ impl MockEvent {
     pub fn new() -> Self {
         MockEvent {
             ..Default::default()
+        }
+    }
+
+    pub fn capture_screenshot(
+        &self,
+        qhandle: &QueueHandle<MockEvent>,
+    ) -> Result<ZwlrScreencopyFrameV1, ()> {
+        match self.ss_manager.as_ref() {
+            None => Err(()),
+            Some(mgr) => Ok(mgr.capture_output(0, &self.wl_outputs[0], qhandle, ())),
         }
     }
 }
@@ -158,7 +167,6 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for MockEvent {
         conn: &Connection,
         qhandle: &wayland_client::QueueHandle<Self>,
     ) {
-        // println!("EVENT FOR FRAME! {:?}", event);
         if let Event::Buffer {
             format,
             width,
@@ -166,19 +174,21 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for MockEvent {
             stride,
         } = event
         {
+            println!("FORMAT: {:?}", format);
             // TODO handle other formats
+            let f = if let WEnum::Value(f) = format {
+                f
+            } else {
+                Format::Xbgr8888
+            };
             state.image_dims = ImageDims {
                 width,
                 height,
                 stride,
-                format: if let WEnum::Value(f) = format {
-                    f
-                } else {
-                    Format::Xbgr8888
-                },
+                format: f,
             };
 
-            state.create_buffer(0, height as i32, width as i32, stride as i32, qhandle);
+            state.create_buffer(0, height as i32, width as i32, stride as i32, f, qhandle);
         }
     }
 }
