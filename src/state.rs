@@ -146,25 +146,13 @@ impl Dispatch<WlRegistry, ()> for MockEvent {
     }
 }
 
-impl Dispatch<ZwlrScreencopyManagerV1, ()> for MockEvent {
-    fn event(
-        state: &mut Self,
-        proxy: &ZwlrScreencopyManagerV1,
-        event: <ZwlrScreencopyManagerV1 as Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &wayland_client::QueueHandle<Self>,
-    ) {
-    }
-}
-
 impl Dispatch<ZwlrScreencopyFrameV1, ()> for MockEvent {
     fn event(
         state: &mut Self,
-        proxy: &ZwlrScreencopyFrameV1,
+        _proxy: &ZwlrScreencopyFrameV1,
         event: <ZwlrScreencopyFrameV1 as Proxy>::Event,
-        data: &(),
-        conn: &Connection,
+        _data: &(),
+        _conn: &Connection,
         qhandle: &wayland_client::QueueHandle<Self>,
     ) {
         if let Event::Buffer {
@@ -195,48 +183,60 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for MockEvent {
 
 impl Dispatch<WlShm, ()> for MockEvent {
     fn event(
-        state: &mut Self,
-        proxy: &WlShm,
-        event: <WlShm as Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &wayland_client::QueueHandle<Self>,
+        _state: &mut Self,
+        _proxy: &WlShm,
+        _event: <WlShm as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &wayland_client::QueueHandle<Self>,
     ) {
     }
 }
 
 impl Dispatch<WlShmPool, ()> for MockEvent {
     fn event(
-        state: &mut Self,
-        proxy: &WlShmPool,
-        event: <WlShmPool as Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &wayland_client::QueueHandle<Self>,
+        _state: &mut Self,
+        _proxy: &WlShmPool,
+        _event: <WlShmPool as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &wayland_client::QueueHandle<Self>,
     ) {
     }
 }
 
 impl Dispatch<WlBuffer, ()> for MockEvent {
     fn event(
-        state: &mut Self,
-        proxy: &WlBuffer,
-        event: <WlBuffer as Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &wayland_client::QueueHandle<Self>,
+        _state: &mut Self,
+        _proxy: &WlBuffer,
+        _event: <WlBuffer as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &wayland_client::QueueHandle<Self>,
     ) {
     }
 }
 
 impl Dispatch<WlOutput, ()> for MockEvent {
     fn event(
-        state: &mut Self,
-        proxy: &WlOutput,
-        event: <WlOutput as Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &wayland_client::QueueHandle<Self>,
+        _state: &mut Self,
+        _proxy: &WlOutput,
+        _event: <WlOutput as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &wayland_client::QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwlrScreencopyManagerV1, ()> for MockEvent {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwlrScreencopyManagerV1,
+        _event: <ZwlrScreencopyManagerV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &wayland_client::QueueHandle<Self>,
     ) {
     }
 }

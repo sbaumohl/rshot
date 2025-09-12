@@ -938,7 +938,6 @@ dependencies = [
  "image",
  "memmap2",
  "wayland-client",
- "wayland-protocols",
  "wayland-protocols-wlr",
 ]
 

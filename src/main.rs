@@ -3,10 +3,6 @@ mod state;
 
 use clap::Parser;
 use image::{ImageBuffer, RgbaImage};
-use std::{
-    process::exit,
-    time::{SystemTime, UNIX_EPOCH},
-};
 
 use wayland_client::{protocol::wl_shm::Format, Connection, EventQueue};
 
@@ -15,18 +11,9 @@ use state::MockEvent;
 
 use crate::state::ImageDims;
 
-fn gen_filename() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Error with system clock!")
-        .as_secs()
-        .to_string();
-    format!("Screenshot_{}.png", secs)
-}
-
 fn get_rgba(dims: &ImageDims, buf: &memmap2::Mmap) -> Vec<u8> {
     match dims.format {
-        Format::Xrgb8888 | Format::Rgbx8888 | Format::Rgba8888 | Format::Argb8888 => {
+        Format::Xrgb8888 | Format::Argb8888 => {
             let mut rgba_data = Vec::with_capacity(dims.total_size());
 
             for idx in (0..dims.height)
@@ -36,18 +23,19 @@ fn get_rgba(dims: &ImageDims, buf: &memmap2::Mmap) -> Vec<u8> {
                 let g = buf[idx + 1];
                 let b = buf[idx];
 
-                rgba_data.extend_from_slice(&[r, g, b, 255]);
+                let a = buf[idx + 3];
+                rgba_data.extend_from_slice(&[r, g, b, a]);
             }
             rgba_data
         }
         _ => {
-            todo!();
+            panic!("Format is not currently supported! ({:?})", dims.format);
         }
     }
 }
 
 fn main() {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     let connection = Connection::connect_to_env().unwrap();
     let display = connection.display();
@@ -81,18 +69,5 @@ fn main() {
     )
     .unwrap();
 
-    let dir = args.get_output_dir();
-    if !dir.exists() || !dir.is_dir() {
-        println!(
-            "Output destination {:?} does not exist or is not a directory!",
-            dir
-        );
-        exit(1);
-    }
-
-    let file_path = dir.join(gen_filename());
-
-    img.save(file_path).unwrap();
-
-    // cleanup
+    img.save(args.get_output_dir()).unwrap();
 }
