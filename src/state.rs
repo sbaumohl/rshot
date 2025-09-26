@@ -1,18 +1,25 @@
-use std::{
-    fs::{File, OpenOptions},
-    io::Write,
-    os::fd::AsFd,
-};
+use std::os::fd::{AsFd, OwnedFd};
 
+use rshot_macros::make_empty_dispatch;
+use rustix::fs::{memfd_create, MemfdFlags};
 use wayland_client::{
     protocol::{
         wl_buffer::WlBuffer,
+        wl_compositor::WlCompositor,
         wl_output::WlOutput,
         wl_registry::{self, WlRegistry},
+        wl_seat::WlSeat,
         wl_shm::{Format, WlShm},
         wl_shm_pool::WlShmPool,
+        wl_surface::WlSurface,
     },
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
+};
+use wayland_protocols_wlr::layer_shell::v1::client::{
+    zwlr_layer_shell_v1::{Event as LayerShellEvent, Layer, ZwlrLayerShellV1},
+    zwlr_layer_surface_v1::{
+        Anchor, Event as LayerSurfaceEvent, KeyboardInteractivity, ZwlrLayerSurfaceV1,
+    },
 };
 use wayland_protocols_wlr::screencopy::v1::client::{
     zwlr_screencopy_frame_v1::{Event, ZwlrScreencopyFrameV1},
@@ -45,17 +52,24 @@ impl ImageDims {
 }
 
 #[derive(Debug, Default)]
-pub struct MockEvent {
+pub struct RShotState {
     pub ss_manager: Option<ZwlrScreencopyManagerV1>,
+    pub shell: Option<ZwlrLayerShellV1>,
+    pub wl_compositor: Option<WlCompositor>,
     pub wl_shm: Option<WlShm>,
     pub wl_outputs: Vec<WlOutput>,
     pub wl_buffer: Option<WlBuffer>,
     pub wl_shm_pool: Option<WlShmPool>,
-    pub file: Option<File>,
+    pub wl_seat: Option<WlSeat>,
+
+    pub application_open: bool,
+    pub application_surface: Option<(WlSurface, ZwlrLayerSurfaceV1)>,
+
+    pub screenshot_fd: Option<OwnedFd>,
     pub image_dims: ImageDims,
 }
 
-impl MockEvent {
+impl RShotState {
     pub fn create_buffer(
         &mut self,
         offset: i32,
@@ -63,54 +77,109 @@ impl MockEvent {
         width: i32,
         stride: i32,
         format: Format,
-        handle: &QueueHandle<MockEvent>,
+        handle: &QueueHandle<RShotState>,
     ) {
         let total_size = stride * height;
-        let file = MockEvent::create_temp_file("ss.tmp".to_string(), total_size as u64);
+        let fd = RShotState::create_temp_file(total_size as u64);
         let pool = self
             .wl_shm
             .as_ref()
             .unwrap()
-            .create_pool(file.as_fd(), total_size, handle, ());
+            .create_pool(fd.as_fd(), total_size, handle, ());
         let shm_buf = pool.create_buffer(offset, width, height, stride, format, handle, ());
         self.wl_shm_pool = Some(pool);
         self.wl_buffer = Some(shm_buf);
-        self.file = Some(file);
+        self.screenshot_fd = Some(fd);
+        // self.file = Some(file);
     }
 
-    pub fn create_temp_file(name: String, no_bytes: u64) -> File {
-        let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join(name);
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(file_path)
-            .unwrap();
-        file.write_all((0..no_bytes).map(|_| ' ').collect::<String>().as_bytes())
-            .unwrap();
-        file
+    pub fn create_temp_file(no_bytes: u64) -> OwnedFd {
+        let fd = memfd_create("screenshot_buffer", MemfdFlags::CLOEXEC).unwrap();
+        rustix::io::retry_on_intr(|| rustix::fs::ftruncate(&fd, no_bytes)).unwrap();
+
+        fd
     }
 
     pub fn new() -> Self {
-        MockEvent {
+        RShotState {
+            application_open: true,
             ..Default::default()
         }
     }
 
     pub fn capture_screenshot(
         &self,
-        qhandle: &QueueHandle<MockEvent>,
+        qhandle: &QueueHandle<RShotState>,
     ) -> Result<ZwlrScreencopyFrameV1, ()> {
         match self.ss_manager.as_ref() {
             None => Err(()),
             Some(mgr) => Ok(mgr.capture_output(0, &self.wl_outputs[0], qhandle, ())),
         }
     }
+
+    pub fn create_layer_surface(&mut self, qhandle: &QueueHandle<RShotState>) {
+        if self.shell.is_none() || self.wl_compositor.is_none() {
+            return;
+        }
+
+        let shell = self.shell.as_ref().unwrap();
+        let compositor = self.wl_compositor.as_ref().unwrap();
+
+        let surface = compositor.create_surface(qhandle, ());
+
+        let layer_surface = shell.get_layer_surface(
+            &surface,
+            Some(&self.wl_outputs[0]),
+            Layer::Top,
+            "Make Selection".to_string(),
+            qhandle,
+            (),
+        );
+
+        layer_surface.set_anchor(Anchor::all());
+        layer_surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+        surface.commit();
+
+        self.application_surface = Some((surface, layer_surface));
+    }
+
+    pub fn render_layer_surface(&mut self, qhandle: &QueueHandle<RShotState>) {
+        let (surface, _) = self.application_surface.as_ref().unwrap();
+
+        let width = 500;
+        let height = 500;
+
+        let stride = width * 4;
+        let size = stride * height;
+
+        // Create in-memory file descriptor
+        let fd = memfd_create("wayland-buffer", MemfdFlags::CLOEXEC).unwrap();
+        rustix::io::retry_on_intr(|| rustix::fs::ftruncate(&fd, size as u64)).unwrap();
+
+        let pool = self
+            .wl_shm
+            .as_ref()
+            .unwrap()
+            .create_pool(fd.as_fd(), size, qhandle, ());
+        let buffer = pool.create_buffer(0, width, height, stride, Format::Argb8888, qhandle, ());
+
+        let mut mmap = unsafe { memmap2::MmapMut::map_mut(&fd).unwrap() };
+
+        // Fill with semi-transparent black
+        for pixel in mmap.chunks_exact_mut(4) {
+            pixel[0] = 0; // Blue
+            pixel[1] = 0; // Green
+            pixel[2] = 50; // Red
+            pixel[3] = 128; // Alpha
+        }
+
+        surface.attach(Some(&buffer), 0, 0);
+        surface.damage_buffer(0, 0, width, height);
+        surface.commit();
+    }
 }
 
-impl Dispatch<WlRegistry, ()> for MockEvent {
+impl Dispatch<WlRegistry, ()> for RShotState {
     fn event(
         state: &mut Self,
         proxy: &wl_registry::WlRegistry,
@@ -135,10 +204,20 @@ impl Dispatch<WlRegistry, ()> for MockEvent {
                     let shm = proxy.bind::<WlShm, _, _>(name, version, qhandle, ());
                     state.wl_shm = Some(shm)
                 }
-
                 "wl_output" => {
                     let output = proxy.bind::<WlOutput, _, _>(name, version, qhandle, ());
                     state.wl_outputs.push(output);
+                }
+                "zwlr_layer_shell_v1" => {
+                    let shell = proxy.bind::<ZwlrLayerShellV1, _, _>(name, version, qhandle, ());
+                    state.shell = Some(shell);
+                }
+                "wl_compositor" => {
+                    state.wl_compositor =
+                        Some(proxy.bind::<WlCompositor, _, _>(name, version, qhandle, ()));
+                }
+                "wl_seat" => {
+                    state.wl_seat = Some(proxy.bind::<WlSeat, _, _>(name, version, qhandle, ()));
                 }
                 _ => {}
             }
@@ -146,7 +225,7 @@ impl Dispatch<WlRegistry, ()> for MockEvent {
     }
 }
 
-impl Dispatch<ZwlrScreencopyFrameV1, ()> for MockEvent {
+impl Dispatch<ZwlrScreencopyFrameV1, ()> for RShotState {
     fn event(
         state: &mut Self,
         _proxy: &ZwlrScreencopyFrameV1,
@@ -181,62 +260,44 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for MockEvent {
     }
 }
 
-impl Dispatch<WlShm, ()> for MockEvent {
-    fn event(
-        _state: &mut Self,
-        _proxy: &WlShm,
-        _event: <WlShm as Proxy>::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &wayland_client::QueueHandle<Self>,
-    ) {
-    }
-}
+make_empty_dispatch!(
+    RShotState => WlCompositor,
+    WlSurface,
+    WlShm,
+    WlShmPool,
+    WlBuffer,
+    WlOutput,
+    ZwlrScreencopyManagerV1,
+    WlSeat,
+    ZwlrLayerShellV1
+);
 
-impl Dispatch<WlShmPool, ()> for MockEvent {
+impl Dispatch<ZwlrLayerSurfaceV1, ()> for RShotState {
     fn event(
-        _state: &mut Self,
-        _proxy: &WlShmPool,
-        _event: <WlShmPool as Proxy>::Event,
+        state: &mut Self,
+        surface: &ZwlrLayerSurfaceV1,
+        event: <ZwlrLayerSurfaceV1 as Proxy>::Event,
         _data: &(),
         _conn: &Connection,
-        _qhandle: &wayland_client::QueueHandle<Self>,
+        qhandle: &QueueHandle<Self>,
     ) {
-    }
-}
-
-impl Dispatch<WlBuffer, ()> for MockEvent {
-    fn event(
-        _state: &mut Self,
-        _proxy: &WlBuffer,
-        _event: <WlBuffer as Proxy>::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &wayland_client::QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<WlOutput, ()> for MockEvent {
-    fn event(
-        _state: &mut Self,
-        _proxy: &WlOutput,
-        _event: <WlOutput as Proxy>::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &wayland_client::QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<ZwlrScreencopyManagerV1, ()> for MockEvent {
-    fn event(
-        _state: &mut Self,
-        _proxy: &ZwlrScreencopyManagerV1,
-        _event: <ZwlrScreencopyManagerV1 as Proxy>::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &wayland_client::QueueHandle<Self>,
-    ) {
+        match event {
+            LayerSurfaceEvent::Configure {
+                serial,
+                width,
+                height,
+            } => {
+                surface.ack_configure(serial);
+                if let (Some(shm), Some(compositor)) = (&state.wl_shm, &state.wl_compositor) {
+                    // let surface = compositor.create_surface(qhandle, ());
+                    // state.create_layer_surface(qhandle);
+                    state.render_layer_surface(qhandle);
+                }
+            }
+            LayerSurfaceEvent::Closed => {
+                state.application_open = false;
+            }
+            _ => {}
+        }
     }
 }

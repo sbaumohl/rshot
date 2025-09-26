@@ -52,7 +52,7 @@ fn parse_path(s: &str) -> Result<PathBuf, String> {
 //     fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {}
 //     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {}
 // }
-//
+
 #[derive(Parser, Debug)]
 #[command(version)]
 pub struct Args {

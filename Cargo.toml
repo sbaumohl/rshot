@@ -7,9 +7,11 @@ edition = "2021"
 clap = {version= "4.5.47", features = ["derive"]}
 image = "0.25.6"
 memmap2 = "0.9.8"
+rustix = "1.1.2"
 wayland-client = "0.31.11"
-# wayland-protocols = { version = "0.32.9", features = ["client", "unstable"]}
+wayland-protocols = { version = "0.32.9", features = ["client", "unstable"]}
 wayland-protocols-wlr = { version = "0.3.9", features = ["client"] }
+rshot-macros = { path = "./rshot-macros/" }
 
 
 [profile.release]
