@@ -60,6 +60,9 @@ pub struct Args {
     output: Option<PathBuf>,
     // #[arg(long, short)]
     // format: Option<ImageFormat>,
+    //
+    #[arg(short, long)]
+    pub no_prompt: bool,
 }
 
 impl Args {

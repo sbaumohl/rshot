@@ -1,6 +1,6 @@
 use std::os::fd::{AsFd, OwnedFd};
 
-use rshot_macros::make_empty_dispatch;
+use rshot_macros::default_dispatch;
 use rustix::fs::{memfd_create, MemfdFlags};
 use wayland_client::{
     protocol::{
@@ -16,7 +16,7 @@ use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1::{Event as LayerShellEvent, Layer, ZwlrLayerShellV1},
+    zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{
         Anchor, Event as LayerSurfaceEvent, KeyboardInteractivity, ZwlrLayerSurfaceV1,
     },
@@ -52,6 +52,17 @@ impl ImageDims {
 }
 
 #[derive(Debug, Default)]
+#[default_dispatch(
+    WlCompositor,
+    WlSurface,
+    WlShm,
+    WlShmPool,
+    WlBuffer,
+    WlOutput,
+    ZwlrScreencopyManagerV1,
+    WlSeat,
+    ZwlrLayerShellV1
+)]
 pub struct RShotState {
     pub ss_manager: Option<ZwlrScreencopyManagerV1>,
     pub shell: Option<ZwlrLayerShellV1>,
@@ -90,7 +101,6 @@ impl RShotState {
         self.wl_shm_pool = Some(pool);
         self.wl_buffer = Some(shm_buf);
         self.screenshot_fd = Some(fd);
-        // self.file = Some(file);
     }
 
     pub fn create_temp_file(no_bytes: u64) -> OwnedFd {
@@ -102,7 +112,7 @@ impl RShotState {
 
     pub fn new() -> Self {
         RShotState {
-            application_open: true,
+            application_open: false,
             ..Default::default()
         }
     }
@@ -140,10 +150,11 @@ impl RShotState {
         layer_surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
         surface.commit();
 
+        self.application_open = true;
         self.application_surface = Some((surface, layer_surface));
     }
 
-    pub fn render_layer_surface(&mut self, qhandle: &QueueHandle<RShotState>) {
+    fn render_layer_surface(&mut self, qhandle: &QueueHandle<RShotState>) {
         let (surface, _) = self.application_surface.as_ref().unwrap();
 
         let width = 500;
@@ -260,18 +271,6 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for RShotState {
     }
 }
 
-make_empty_dispatch!(
-    RShotState => WlCompositor,
-    WlSurface,
-    WlShm,
-    WlShmPool,
-    WlBuffer,
-    WlOutput,
-    ZwlrScreencopyManagerV1,
-    WlSeat,
-    ZwlrLayerShellV1
-);
-
 impl Dispatch<ZwlrLayerSurfaceV1, ()> for RShotState {
     fn event(
         state: &mut Self,
@@ -289,8 +288,6 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for RShotState {
             } => {
                 surface.ack_configure(serial);
                 if let (Some(shm), Some(compositor)) = (&state.wl_shm, &state.wl_compositor) {
-                    // let surface = compositor.create_surface(qhandle, ());
-                    // state.create_layer_surface(qhandle);
                     state.render_layer_surface(qhandle);
                 }
             }

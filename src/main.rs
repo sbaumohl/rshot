@@ -14,10 +14,7 @@ fn get_rgba(dims: &ImageDims, buf: &memmap2::Mmap) -> Vec<u8> {
         Format::Xrgb8888 | Format::Argb8888 => {
             let mut rgba_data = Vec::with_capacity(dims.total_size());
 
-            for idx in (0..dims.height * dims.stride)
-                .step_by(4)
-                .map(|x| x as usize)
-            {
+            for idx in (0..(dims.height * dims.stride) as usize).step_by(4) {
                 let r = buf[idx + 2];
                 let g = buf[idx + 1];
                 let b = buf[idx];
@@ -60,7 +57,6 @@ fn capture_screenshot(
 
     queue.blocking_dispatch(state).unwrap();
 
-    // let temp_file = state.file.as_ref().expect("Could not unwrap temp file!");
     let fd = state
         .screenshot_fd
         .as_ref()
@@ -89,8 +85,10 @@ fn main() {
     let img = capture_screenshot(&mut state, &mut queue, &handle).unwrap();
     img.save(args.get_output_dir()).unwrap();
 
-    state.create_layer_surface(&handle);
-    while state.application_open {
-        queue.blocking_dispatch(&mut state).unwrap();
+    if !args.no_prompt {
+        state.create_layer_surface(&handle);
+        while state.application_open {
+            queue.blocking_dispatch(&mut state).unwrap();
+        }
     }
 }
