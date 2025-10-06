@@ -6,9 +6,11 @@ use wayland_client::{
     protocol::{
         wl_buffer::WlBuffer,
         wl_compositor::WlCompositor,
+        wl_data_device::WlDataDevice,
+        wl_keyboard::{self, WlKeyboard},
         wl_output::WlOutput,
         wl_registry::{self, WlRegistry},
-        wl_seat::WlSeat,
+        wl_seat::{self, WlSeat},
         wl_shm::{Format, WlShm},
         wl_shm_pool::WlShmPool,
         wl_surface::WlSurface,
@@ -60,8 +62,8 @@ impl ImageDims {
     WlBuffer,
     WlOutput,
     ZwlrScreencopyManagerV1,
-    WlSeat,
-    ZwlrLayerShellV1
+    ZwlrLayerShellV1,
+    WlDataDevice
 )]
 pub struct RShotState {
     pub ss_manager: Option<ZwlrScreencopyManagerV1>,
@@ -176,7 +178,6 @@ impl RShotState {
 
         let mut mmap = unsafe { memmap2::MmapMut::map_mut(&fd).unwrap() };
 
-        // Fill with semi-transparent black
         for pixel in mmap.chunks_exact_mut(4) {
             pixel[0] = 0; // Blue
             pixel[1] = 0; // Green
@@ -287,13 +288,75 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for RShotState {
                 height,
             } => {
                 surface.ack_configure(serial);
-                if let (Some(shm), Some(compositor)) = (&state.wl_shm, &state.wl_compositor) {
+                if let (Some(_), Some(_)) = (&state.wl_shm, &state.wl_compositor) {
                     state.render_layer_surface(qhandle);
                 }
             }
             LayerSurfaceEvent::Closed => {
                 state.application_open = false;
             }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<WlSeat, ()> for RShotState {
+    fn event(
+        state: &mut Self,
+        seat: &WlSeat,
+        event: <WlSeat as Proxy>::Event,
+        data: &(),
+        conn: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(val),
+        } = event
+        {
+            if val.contains(wl_seat::Capability::Keyboard) {
+                let keyboard = seat.get_keyboard(qhandle, ());
+            }
+        }
+    }
+}
+
+impl Dispatch<WlKeyboard, ()> for RShotState {
+    fn event(
+        app_state: &mut Self,
+        proxy: &WlKeyboard,
+        event: <WlKeyboard as Proxy>::Event,
+        data: &(),
+        conn: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_keyboard::Event::Key {
+                serial,
+                time,
+                key,
+                state,
+            } => {
+                // check for `esc` key
+                // TODO don't use 1, find constant
+                if WEnum::Value(wl_keyboard::KeyState::Pressed) == state && key == 1 {
+                    println!("Exiting...");
+                    app_state.application_open = false;
+                }
+            }
+            // wl_keyboard::Event::Leave { serial, surface } => {}
+            // wl_keyboard::Event::Modifiers {
+            //     serial,
+            //     mods_depressed,
+            //     mods_latched,
+            //     mods_locked,
+            //     group,
+            // } => {}
+            // wl_keyboard::Event::Key {
+            //     serial,
+            //     time,
+            //     key,
+            //     state,
+            // } => {}
             _ => {}
         }
     }

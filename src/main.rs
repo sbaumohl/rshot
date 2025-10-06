@@ -1,34 +1,18 @@
 mod argparser;
+mod render;
 mod state;
+
+use std::process::exit;
 
 use clap::Parser;
 use image::{ImageBuffer, RgbaImage};
 
-use wayland_client::{protocol::wl_shm::Format, Connection, EventQueue, QueueHandle};
+use wayland_client::{Connection, EventQueue, QueueHandle};
 
 use argparser::Args;
-use state::{ImageDims, RShotState};
+use state::RShotState;
 
-fn get_rgba(dims: &ImageDims, buf: &memmap2::Mmap) -> Vec<u8> {
-    match dims.format {
-        Format::Xrgb8888 | Format::Argb8888 => {
-            let mut rgba_data = Vec::with_capacity(dims.total_size());
-
-            for idx in (0..(dims.height * dims.stride) as usize).step_by(4) {
-                let r = buf[idx + 2];
-                let g = buf[idx + 1];
-                let b = buf[idx];
-
-                let a = buf[idx + 3];
-                rgba_data.extend_from_slice(&[r, g, b, a]);
-            }
-            rgba_data
-        }
-        _ => {
-            panic!("Format is not currently supported! ({:?})", dims.format);
-        }
-    }
-}
+use crate::render::{crop_to_region, get_rgba};
 
 fn initialize() -> (EventQueue<RShotState>, QueueHandle<RShotState>) {
     let connection = Connection::connect_to_env().unwrap();
@@ -45,7 +29,7 @@ fn capture_screenshot(
     queue: &mut EventQueue<RShotState>,
     handle: &QueueHandle<RShotState>,
 ) -> Result<RgbaImage, ()> {
-    // TODO add parems for output no., cursor
+    // TODO add params for output no., cursor
     let frame = state
         .capture_screenshot(handle)
         .expect("Could not capture screenshot!");
@@ -76,13 +60,26 @@ fn capture_screenshot(
 fn main() {
     let mut args = Args::parse();
 
+    if args.dry_run {
+        println!("{:#?}", args);
+        exit(0);
+    }
+
     let (mut queue, handle) = initialize();
 
     let mut state: RShotState = RShotState::new();
 
     queue.roundtrip(&mut state).unwrap();
 
-    let img = capture_screenshot(&mut state, &mut queue, &handle).unwrap();
+    let mut img = capture_screenshot(&mut state, &mut queue, &handle).unwrap();
+
+    if let Some(region) = args.region.as_ref() {
+        img = crop_to_region(&img, region).unwrap_or_else(|err| {
+            println!("{}", err);
+            exit(1);
+        });
+    }
+
     img.save(args.get_output_dir()).unwrap();
 
     if !args.no_prompt {
